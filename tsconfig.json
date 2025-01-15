@@ -1,0 +1,18 @@
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "ES2022",
+    "moduleResolution": "node",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "allowJs": true,
+    "resolveJsonModule": true,
+    "lib": ["ES2020", "DOM"],
+    "outDir": "./dist",
+    "declaration": true,
+    "types": ["node"]
+  },
+  "include": ["dexter-talos-bot/src/**/*", "src/config/prompts.template.ts"],
+  "exclude": ["node_modules"]
+}

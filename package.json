@@ -1,0 +1,27 @@
+{
+  "name": "dexter-talos-bot",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "build": "tsc",
+    "start-logs": "node --experimental-specifier-resolution=node --loader ts-node/esm src/portfolio-swaps.ts"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "description": "",
+  "devDependencies": {
+    "@types/node": "^22.10.6",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.7.3"
+  },
+  "dependencies": {
+    "@indigo-labs/dexter": "^5.4.10",
+    "@indigo-labs/iris-sdk": "^1.0.3",
+    "axios": "^1.7.9",
+    "concurrently": "^8.2.2",
+    "dotenv": "^16.4.7",
+    "openai": "^4.78.1"
+  }
+}
