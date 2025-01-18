@@ -1,4 +1,4 @@
-# Talos - Autonomous Cardano DEX Trading Bot
+# Autonomous Cardano DEX Trading Bot
 
 An AI-powered trading bot that uses TapTools data and GPT-4 analysis to execute trades across Cardano DEXs using [Indigo Labs' Dexter SDK](https://github.com/IndigoProtocol/dexter).
 
@@ -51,10 +51,6 @@ git clone https://github.com/yourusername/talos-dexter-bot.git
 # Install dependencies
 cd talos-dexter-bot
 npm install
-
-# Copy example config files
-cp src/config/prompts.template.ts src/config/prompts.ts
-cp src/config/analysis-guidelines.template.ts src/config/analysis-guidelines.ts
 ```
 
 ## Configuration
