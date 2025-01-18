@@ -50,8 +50,18 @@
 
 // 1) ENV & Imports
 import 'dotenv/config';
-import axios, { AxiosError } from 'axios';
+import axios from 'axios';
 import OpenAI from 'openai';
+
+// Token source configuration
+enum TokenSource {
+  PREDEFINED_LIST = 'PREDEFINED_LIST',    // Use only tokens from token-lists.ts
+  TOP_VOLUME = 'TOP_VOLUME',              // Use only top volume tokens from TapTools
+  COMBINED = 'COMBINED'                   // Use both predefined and top volume tokens
+}
+// CHOOSE TOKENS TO TRADE WITH TOKENSOURCE, SEE PREDEFINED_LIST IS IN token-lists`
+const ACTIVE_TOKEN_SOURCE: TokenSource = TokenSource.PREDEFINED_LIST;
+
 import { AGENT_BIO, AGENT_LORE } from './config/prompts';
 import { 
   ANALYSIS_GUIDELINES, 
@@ -97,6 +107,13 @@ import {
   TARGET_RATIOS as targetRatios,
   classifyToken 
 } from './config/portfolio-settings';
+
+import { 
+  getAllTradingTokens, 
+  TokenConfig, 
+  getTokenConfigByTicker,
+  getTokenConfig 
+} from './token-lists';
 
 ///////////////////////////////////////////
 // 2) ENV VARS
@@ -647,15 +664,136 @@ async function executeDexSwap(
   }
 }
 
+async function getTopTokens(): Promise<TapToolsVolumeToken[]> {
+  let combinedTokens: TapToolsVolumeToken[] = [];
+
+  // Get predefined tokens if needed
+  if (ACTIVE_TOKEN_SOURCE === TokenSource.PREDEFINED_LIST || ACTIVE_TOKEN_SOURCE === TokenSource.COMBINED) {
+    const tradingTokens = getAllTradingTokens();
+    console.log('=== [BOT] Using configured trading tokens ===');
+    const configuredTokens = tradingTokens.map(token => ({
+      ticker: token.ticker,
+      unit: token.unit,
+      price: 0, // Will be populated later
+      volume: 0 // Will be populated later
+    }));
+    console.log('[BOT] Configured tokens:', configuredTokens.map(t => t.ticker));
+    combinedTokens.push(...configuredTokens);
+  }
+
+  // Get top volume tokens if needed
+  if (ACTIVE_TOKEN_SOURCE === TokenSource.TOP_VOLUME || ACTIVE_TOKEN_SOURCE === TokenSource.COMBINED) {
+    console.log('=== [BOT] Fetching top volume tokens from TapTools ===');
+    const topVolumeTokens = await taptoolsGetTopVolumeTokens(10);
+    console.log('[BOT] Top volume tokens:', topVolumeTokens.map(t => t.ticker));
+    
+    // Only add non-duplicate tokens
+    for (const token of topVolumeTokens) {
+      if (!combinedTokens.some(t => t.unit === token.unit)) {
+        combinedTokens.push(token);
+      }
+    }
+  }
+
+  // Get prices for tokens that don't have them
+  const tokenUnits = combinedTokens
+    .filter(t => t.price === 0)
+    .map(t => t.unit);
+  if (tokenUnits.length > 0) {
+    const prices = await taptoolsGetTokenPrices(tokenUnits);
+    for (const token of combinedTokens) {
+      if (token.price === 0) {
+        token.price = prices[token.unit] || 0;
+      }
+    }
+  }
+
+  console.log(`[BOT] Total unique tokens to monitor: ${combinedTokens.length}`);
+  console.log(`[BOT] Using token source: ${ACTIVE_TOKEN_SOURCE}`);
+  return combinedTokens;
+}
+
+// Helper to get token info by unit
+function getTokenInfo(unit: string): TokenConfig | undefined {
+  // First check our predefined list
+  const configuredToken = getTokenConfigByTicker(unit);
+  if (configuredToken) {
+    return configuredToken;
+  }
+
+  // If not in predefined list, create a basic config
+  return {
+    unit,
+    ticker: unit.slice(0, 10) + '...', // Truncated unit as fallback ticker
+    category: 'other', // Default category
+    minTradeSize: 10,
+    maxTradeSize: 200,
+    profitTargets: {
+      quick: 0.10,
+      medium: 0.20,
+      long: 0.30
+    },
+    trailingStop: 0.05
+  };
+}
+
+// Add color constants at the top with other imports
+const COLORS = {
+  green: '\x1b[32m',
+  yellow: '\x1b[33m',
+  blue: '\x1b[34m',
+  magenta: '\x1b[35m',
+  cyan: '\x1b[36m',
+  red: '\x1b[31m',
+  white: '\x1b[37m',
+  bold: '\x1b[1m',
+  reset: '\x1b[0m'
+};
+
+// Category colors mapping
+const CATEGORY_COLORS: Record<Category, string> = {
+  ada: COLORS.blue,
+  stable: COLORS.green,
+  defi: COLORS.magenta,
+  ai: COLORS.cyan,
+  gaming: COLORS.yellow,
+  meme_coins: COLORS.red,
+  depin: COLORS.green,
+  other: COLORS.white
+};
+
+// Update the portfolio value breakdown to match our categories
+function logPortfolioBreakdown(portfolioValues: Record<Category, number>, totalValue: number) {
+  console.log(`\n${COLORS.bold}[PORTFOLIO] Value Breakdown:${COLORS.reset}`);
+  
+  // Get all categories from the Category type
+  const categories: Category[] = ['ada', 'stable', 'defi', 'ai', 'gaming', 'meme_coins', 'depin', 'other'];
+  
+  categories.forEach(category => {
+    const categoryValue = portfolioValues[category];
+    const percentage = totalValue > 0 ? (categoryValue / totalValue * 100).toFixed(2) : '0.00';
+    const color = CATEGORY_COLORS[category];
+    
+    // Format the values with colors
+    const categoryName = `${color}${category.padEnd(12)}${COLORS.reset}`;
+    const valueStr = `${color}${categoryValue.toFixed(2).padStart(12)} ADA${COLORS.reset}`;
+    const percentStr = `${color}(${percentage.padStart(6)}%)${COLORS.reset}`;
+    
+    console.log(`  ${categoryName}: ${valueStr} ${percentStr}`);
+  });
+  
+  // Print total with bold cyan
+  console.log(`\n${COLORS.bold}${COLORS.cyan}[PORTFOLIO] Total Value: ${totalValue.toFixed(2)} ADA${COLORS.reset}\n`);
+}
+
 async function loop() {
     try {
-      console.log('\n=== [BOT] Fetching top tokens from TapTools ===');
-      const topTokens = await taptoolsGetTopVolumeTokens(10);
-      if (!topTokens.length) {
+      // Get combined list of configured and top volume tokens
+      const tokens = await getTopTokens();
+      if (!tokens.length) {
         console.log('[BOT] No tokens returned. Skipping iteration.');
         return;
       }
-      console.log('[BOT] Top tokens:', topTokens.map(t=>t.ticker));
 
       // If we do portfolio checks:
       let addressInfo: Record<string, any> | null = null;
@@ -667,11 +805,13 @@ async function loop() {
       let totalAdaValue = 0;
       const categoryValues: Record<Category, number> = {
         ada: 0,
+        stable: 0,
+        defi: 0,
+        ai: 0,
+        gaming: 0,
         meme_coins: 0,
-        shards_talos: 0,
-        indy: 0,
-        big_others: 0,
-        new_positions: 0
+        depin: 0,
+        other: 0,
       };
 
       if (addressInfo) {
@@ -679,6 +819,7 @@ async function loop() {
         const adaStr = addressInfo.lovelace || '0';
         const userAda = parseInt(adaStr, 10) / 1_000_000;
         categoryValues.ada = userAda;
+        totalAdaValue += userAda;
 
         // 2. Get all token units we need prices for
         const allUnitsInWallet: string[] = [];
@@ -697,29 +838,27 @@ async function loop() {
             const price = tokenPrices[asset.unit] || 0;
             if (price <= 0) continue;
             
-            const quantity = parseInt(asset.quantity, 10);
+            // Get token info and decimals
+            const tokenInfo = getTokenConfig(asset.unit);
+            const decimals = tokenInfo?.decimals || await getAssetDecimals(asset.unit);
+            
+            // Calculate proper quantity using decimals
+            const quantity = parseInt(asset.quantity, 10) / Math.pow(10, decimals);
             const valueInAda = quantity * price;
             
-            // Add value to proper category
-            const category = classifyToken(asset.unit);
+            // Determine category and add value
+            const category = tokenInfo?.category || 'other';
             categoryValues[category] += valueInAda;
+            totalAdaValue += valueInAda;
           }
         }
-
-        // 5. Sum total portfolio value
-        totalAdaValue = Object.values(categoryValues).reduce((a,b) => a + b, 0);
         
-        // Log the breakdown
-        console.log('[PORTFOLIO] Value Breakdown:');
-        for (const [cat, value] of Object.entries(categoryValues)) {
-          const percentage = totalAdaValue > 0 ? ((value / totalAdaValue) * 100).toFixed(2) : '0.00';
-          console.log(`  ${cat}: ${value.toFixed(2)} ADA (${percentage}%)`);
-        }
-        console.log(`[PORTFOLIO] Total Value: ${totalAdaValue.toFixed(2)} ADA`);
+        // Log the breakdown with colors
+        logPortfolioBreakdown(categoryValues, totalAdaValue);
       }
 
-      // For each top token, fetch advanced data:
-      for (const tokenInfo of topTokens) {
+      // For each token, fetch advanced data and analyze:
+      for (const tokenInfo of tokens) {
         const { ticker, unit, price, volume } = tokenInfo;
         const tokenData: any = {
           ticker,
@@ -748,18 +887,25 @@ async function loop() {
           continue;
         }
 
-        // Use dynamic sizing between 50-500 ADA
-        let recommended = Math.min(Math.max(decision.size || 50, 50), 500);
+        // Get token configuration for sizing and category
+        const tokenConfig = getTokenInfo(unit);
+        if (!tokenConfig) {
+          console.log(`[BOT] No token config found for ${ticker}, skipping`);
+          continue;
+        }
+
+        // Use dynamic sizing between token's min and max trade size
+        const minSize = tokenConfig.minTradeSize || 50;
+        const maxSize = tokenConfig.maxTradeSize || 500;
+        let recommended = Math.min(Math.max(decision.size || minSize, minSize), maxSize);
         let finalAmount = recommended;
 
         if (addressInfo) {
-          // Decide category for portfolio 
-          const cat = classifyToken(unit);
-          const catValueNow = categoryValues[cat];
+          const catValueNow = categoryValues[tokenConfig.category];
           const userAdaBal = categoryValues.ada; 
           finalAmount = adjustTradeForPortfolio(
             decision.direction,
-            cat,
+            tokenConfig.category,
             recommended,
             totalAdaValue,
             catValueNow,

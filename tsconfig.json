@@ -13,6 +13,6 @@
     "declaration": true,
     "types": ["node"]
   },
-  "include": ["dexter-talos-bot/src/**/*", "src/config/prompts.template.ts"],
+  "include": ["dexter-talos-bot/src/**/*", "src/config/prompts.ts"],
   "exclude": ["node_modules"]
 }

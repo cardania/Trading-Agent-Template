@@ -34,7 +34,6 @@ logs.txt
 # Testing
 /coverage/
 
-/src/config/portfolio-settings.ts
 
 # Temporary files
 *.tmp
@@ -50,6 +49,4 @@ logs.txt
 ehthumbs.db
 Thumbs.db
 
-# Project specific
-/src/config/analysis-guidelines.ts
-/src/config/prompts.ts
+

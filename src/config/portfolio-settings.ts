@@ -1,8 +1,5 @@
 // Copy this file to portfolio-settings.ts and customize the values
-export type Category = 'stable'
-  | 'defi'
-  | 'governance'
-  | 'other';
+export type Category = 'ada' | 'meme_coins' | 'ai' | 'gaming' | 'stable' | 'defi' | 'depin' | 'other';
 
 /**
  * Target allocation ratios for different asset categories in the portfolio.
@@ -17,10 +14,14 @@ export type Category = 'stable'
  */
 
 export const TARGET_RATIOS: Record<Category, number> = {
-  stable: 0.40,
-  defi: 0.30,
-  governance: 0.20,
-  other: 0.10
+  ada: 0.20,
+  stable: 0.15,
+  defi: 0.15,
+  ai: 0.15,
+  gaming: 0.10,
+  meme_coins: 0.10,
+  depin: 0.10,
+  other: 0.05
 };
 
 // Policy IDs for different token categories
@@ -38,9 +39,6 @@ export function classifyToken(unit: string): Category {
   }
   if (TOKEN_POLICIES.defi.some(id => unit.includes(id))) {
     return 'defi';
-  }
-  if (TOKEN_POLICIES.governance.some(id => unit.includes(id))) {
-    return 'governance';
   }
   return 'other';
 }
