@@ -142,6 +142,6 @@ SOFTWARE.
 
 ## Acknowledgments
 
-- [Indigo Protocol](https://indigoprotocol.io/) ans Zachary Sluder for the Dexter SDK
+- [Indigo Protocol](https://indigoprotocol.io/) & Zachary Sluder for the Dexter and Iris SDKs
 - TapTools for market data API
 - OpenAI for GPT-4o API
