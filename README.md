@@ -145,3 +145,4 @@ SOFTWARE.
 - [Indigo Protocol](https://indigoprotocol.io/) & Zachary Sluder for the Dexter and Iris SDKs
 - TapTools for market data API
 - OpenAI for GPT-4o API
+# Trading-Agent-Template
