@@ -153,8 +153,8 @@ const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 const dexterConfig: DexterConfig = {
   shouldFetchMetadata: true,
   shouldFallbackToApi: true,
-  shouldSubmitOrders: true,
-  metadataMsgBranding: 'TSMarketBot'
+  shouldSubmitOrders: false,
+  metadataMsgBranding: 'Cardania Trading Agent'
 };
 
 const requestConfig: RequestConfig = {
@@ -380,7 +380,7 @@ export async function taptoolsGetTokenMcap(unit: string): Promise<Record<string,
 ///////////////////////////////////////////
 interface LlmDecision {
   trade: 'true'|'false';
-  direction: 'buy'|'sell';
+  direction: 'buy'|'sell'|'hold';
   confidence: number;
   size: number;
   reasoning: {
@@ -405,9 +405,16 @@ async function getLlmTradingDecision(tokenData: any): Promise<LlmDecision> {
         `${category}:\n${guidelines.map(g => `       - ${g}`).join('\n')}`
       ).join('\n\n')}
 
+    Portfolio Rules:
+    - ONLY recommend 'buy' if has_room_to_buy is true in portfolio_context
+    - If recommending 'buy', size must not exceed ada_room_left in portfolio_context
+    - If current_ratio >= target_ratio, ONLY recommend 'sell' or 'hold'
+    - Consider category allocation targets when sizing positions
+
     Your job: 
       - Evaluate ALL available token data
       - Consider market structure, liquidity, and technical factors
+      - Ensure recommendations comply with portfolio rules
       - Decide whether to buy or sell the token on a DEX
       - Provide comprehensive reasoning in JSON
 
@@ -430,31 +437,101 @@ async function getLlmTradingDecision(tokenData: any): Promise<LlmDecision> {
     Analyze the following token data and respond in strict JSON:
     ${JSON.stringify(tokenData, null, 2)}
     `;
-
-    const resp = await openai.chat.completions.create({
+    console.log(`\n[ANALYSIS] Starting analysis for ${tokenData.ticker}...`);
+    
+    const stream = await openai.chat.completions.create({
       model: 'gpt-4o',
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userPrompt }
       ],
       temperature: 0.1,
-      max_tokens: 1000
+      max_tokens: 1000,
+      stream: true
     });
-    const text = resp.choices[0].message?.content?.trim() || '';
-    return JSON.parse(text) as LlmDecision;
+
+    let fullResponse = '';
+    let currentField = '';
+    let buffer = '';
+
+    for await (const chunk of stream) {
+      const content = chunk.choices[0]?.delta?.content || '';
+      fullResponse += content;
+      
+      buffer += content;
+
+      // Detect current analysis section
+      if (buffer.includes('"price_analysis":')) currentField = '\x1b[37mPrice Analysis\x1b[32m'; // White title then back to green
+      else if (buffer.includes('"volume_analysis":')) currentField = '\x1b[37mVolume Analysis\x1b[32m';
+      else if (buffer.includes('"risk_assessment":')) currentField = '\x1b[37mRisk Assessment\x1b[32m';
+      else if (buffer.includes('"confidence_explanation":')) currentField = '\x1b[37mConfidence\x1b[32m';
+      else if (buffer.includes('"size_explanation":')) currentField = '\x1b[37mPosition Size\x1b[32m';
+
+      // Print content in green
+      process.stdout.write('\x1b[32m' + content);
+      
+      // When we hit a section break, format it nicely and reset color
+      if (buffer.includes('",') || buffer.includes('"}')) {
+        process.stdout.write('\x1b[0m\n'); // Reset color and add newline
+        buffer = '';
+      }
+    }
+
+    console.log('\x1b[0m\n[ANALYSIS] Analysis complete.\n'); // Reset color at end
+
+    try {
+      const decision = JSON.parse(fullResponse) as LlmDecision;
+      
+      // Print decision summary
+      console.log('\x1b[1m\x1b[36m[DECISION] Summary:\x1b[0m');
+      
+      // Trade decision with color based on yes/no
+      const tradeColor = decision.trade === 'true' ? '\x1b[32m' : '\x1b[31m'; // Green for yes, red for no
+      console.log(`  \x1b[36mTrade:\x1b[0m ${tradeColor}${decision.trade === 'true' ? 'YES' : 'NO'}\x1b[0m`);
+      
+      if (decision.trade === 'true') {
+        // Direction with color based on action
+        let directionColor = '\x1b[37m'; // Default white for hold
+        if (decision.direction === 'buy') directionColor = '\x1b[32m'; // Green for buy
+        if (decision.direction === 'sell') directionColor = '\x1b[31m'; // Red for sell
+        console.log(`  \x1b[36mDirection:\x1b[0m ${directionColor}${decision.direction.toUpperCase()}\x1b[0m`);
+        
+        // Confidence with color based on level
+        const confidence = decision.confidence * 100;
+        let confidenceColor = '\x1b[31m'; // Red for low confidence
+        if (confidence >= 60) confidenceColor = '\x1b[33m'; // Yellow for medium confidence
+        if (confidence >= 75) confidenceColor = '\x1b[32m'; // Green for high confidence
+        console.log(`  \x1b[36mConfidence:\x1b[0m ${confidenceColor}${confidence.toFixed(1)}%\x1b[0m`);
+        
+        // Size with color based on amount
+        const size = decision.size;
+        let sizeColor = '\x1b[32m'; // Green for normal size
+        if (size > 1000) sizeColor = '\x1b[33m'; // Yellow for large size
+        if (size > 5000) sizeColor = '\x1b[31m'; // Red for very large size
+        console.log(`  \x1b[36mSize:\x1b[0m ${sizeColor}${size.toLocaleString()} ADA\x1b[0m`);
+      }
+      
+      console.log(''); // Empty line for spacing
+
+      return decision;
+    } catch (parseError) {
+      console.error('[ERROR] Failed to parse LLM response:', parseError);
+      throw parseError;
+    }
+
   } catch (err) {
-    console.error('LLM Decision Error:', err);
+    console.error('[ERROR] LLM Decision Error:', err);
     return {
       trade: 'false',
-      direction: 'buy',
+      direction: 'hold',
       confidence: 0,
       size: 0,
       reasoning: {
-        price_analysis: 'LLM error',
-        volume_analysis: '',
-        risk_assessment: '',
-        confidence_explanation: '',
-        size_explanation: ''
+        price_analysis: 'LLM error occurred',
+        volume_analysis: 'Error processing request',
+        risk_assessment: 'Unable to assess risk',
+        confidence_explanation: 'Error in analysis',
+        size_explanation: 'No position size due to error'
       }
     };
   }
@@ -876,12 +953,13 @@ async function loop() {
         tokenData.mcap = await taptoolsGetTokenMcap(unit);
 
         const decision = await getLlmTradingDecision(tokenData);
-        console.log(`[LLM] Decision for ${ticker}:`, decision);
-
-        if (decision.trade === 'false') {
-          console.log(`[BOT] Skipping ${ticker}, no trade recommended.`);
+        
+        // Skip if no trade or hold recommendation
+        if (decision.trade === 'false' || decision.direction === 'hold') {
+          console.log(`[BOT] Skipping ${ticker}, ${decision.direction === 'hold' ? 'hold recommended' : 'no trade recommended'}.`);
           continue;
         }
+
         if (decision.confidence < 0.6) {
           console.log(`[BOT] Skipping ${ticker}, confidence only ${decision.confidence}`);
           continue;
@@ -904,7 +982,7 @@ async function loop() {
           const catValueNow = categoryValues[tokenConfig.category];
           const userAdaBal = categoryValues.ada; 
           finalAmount = adjustTradeForPortfolio(
-            decision.direction,
+            decision.direction as 'buy' | 'sell', // Type assertion since we know it's not 'hold' at this point
             tokenConfig.category,
             recommended,
             totalAdaValue,
@@ -916,8 +994,12 @@ async function loop() {
             continue;          
           }        
         }        
-        console.log(`[BOT] Executing ${decision.direction.toUpperCase()} of ${finalAmount} ADA for token ${ticker}`);        
-        await executeDexSwap(decision.direction, finalAmount, unit);      
+        
+        // Only execute swap for buy/sell (not hold)
+        if (decision.direction === 'buy' || decision.direction === 'sell') {
+          console.log(`[BOT] Executing ${decision.direction.toUpperCase()} of ${finalAmount} ADA for token ${ticker}`);        
+          await executeDexSwap(decision.direction, finalAmount, unit);
+        }
       }    
     } catch (err) {      
       console.error('[BOT] Main Loop Error:', err);    
